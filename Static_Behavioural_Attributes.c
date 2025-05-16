@@ -6,6 +6,7 @@
 #include <sys/statvfs.h>
 #include <sys/sysinfo.h>
 #include <malloc.h>
+#include <mosquitto.h>
 
 #define BUF_SIZE 1024
 
@@ -14,6 +15,7 @@
 #define BROKER    "localhost"
 
 FILE *json = NULL; 
+struct mosquitto *mosq = NULL;
 
 int  log_uptime();
 int  log_cpu_usage();
@@ -22,7 +24,8 @@ int  log_network_traffic();
 int  log_memory_usage();
 int  log_disk_usage();
 
-void publish_cpu_data();
+int mqtt_publish_initialisation();
+void mqtt_publish();
 
 int main() 
 {
@@ -32,7 +35,9 @@ int main()
       perror("Could not create or open /tmp/Behavioral_Attributes_data.json");
       return -1;
     }
-    
+  
+  mqtt_publish_initialisation();
+      
   while (1) 
     {
         fseek(json, 0, SEEK_SET);    
@@ -47,12 +52,17 @@ int main()
         
         fprintf(json, "}\n");
         fflush(json);
-        
-        publish_cpu_data();
-        
+      
+        mqtt_publish();
+      
         sleep(10);
     }
     fclose(json);
+    
+    mosquitto_disconnect(mosq);
+    mosquitto_destroy(mosq);
+    mosquitto_lib_cleanup();
+    
     return 0;
 }
 
@@ -112,7 +122,7 @@ int log_network_traffic()
     if (!fp) 
     {
       perror("Could not open /proc/net/dev");
-      return -1;MQTT.h
+      return -1;
     }
     char buffer[BUF_SIZE];
     for(int i = 0; i < 2; i++) 
@@ -131,7 +141,7 @@ int log_network_traffic()
 }
 
 int log_memory_usage() 
-{
+{ struct mosquitto *mosq = NULL;
     struct sysinfo info;
     sysinfo(&info);
     fprintf(json,"\t\"Total_Memory_(MB)\":\"%lu\",\n",info.totalram / (1024 * 1024));
@@ -158,11 +168,41 @@ int log_disk_usage()
     }
 }
 
-void publish_cpu_data() 
+int mqtt_publish_initialisation()
 {
-    char command[256];
-    snprintf(command, sizeof(command),"mosquitto_pub -h %s -t %s -f %s",BROKER, TOPIC, DATA_FILE);
-    system(command);
+    mosquitto_lib_init();
+    mosq = mosquitto_new(NULL, true, NULL);//  NULL = the client ID, true = client should automatically reconnect when connection is lost 
+                                           //  NULL = user-defined object 
+    if (!mosq) 
+    {
+        fprintf(stderr, "Failed to create Mosquitto instance\n");
+        return -1;
+    }
+
+    if (mosquitto_connect(mosq, BROKER, 1883, 60) != MOSQ_ERR_SUCCESS) //mosq = name of client, BROKER = host name, 1883 = port no (Unsecure MQTT Port), 60 = keep-alive interval in sec 
+    {
+        fprintf(stderr, "Unable to connect to MQTT broker\n");
+        mosquitto_destroy(mosq);
+        mosquitto_lib_cleanup();
+        return -1;
+    }    
+
 }
 
-
+void mqtt_publish()
+{
+    fseek(json, 0, SEEK_SET);    
+    char buffer[BUF_SIZE] = {0};
+    fread(buffer, 1, sizeof(buffer)-1, json);
+    buffer[BUF_SIZE]='\0';
+    
+    int rc = mosquitto_publish(mosq, NULL, TOPIC, strlen(buffer), buffer, 0, false);
+    if (rc != MOSQ_ERR_SUCCESS) 
+    {
+      fprintf(stderr, "Failed to publish: %s\n", mosquitto_strerror(rc));
+    }
+    /*
+    NULL = message ID, TOPIC = messege categorised, strlen(buffer) = length of the message (bytes), buffer = actual message location, 0: The QoS (at most once), false: Retain flag off (will not retain the message after it is delivered)
+    
+    */
+}    

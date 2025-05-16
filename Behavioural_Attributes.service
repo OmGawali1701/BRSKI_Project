@@ -1,0 +1,15 @@
+[Unit]
+Description=Behavioral Attribute Collection Daemon
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/Behavioral_Attributes
+# Make sure the binary exists at this path
+Restart=on-failure
+User=root
+StandardOutput=null
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+

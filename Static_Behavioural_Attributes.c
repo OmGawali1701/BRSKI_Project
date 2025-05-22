@@ -40,8 +40,11 @@ int main()
       
   while (1) 
     {
-        fseek(json, 0, SEEK_SET);    
-        ftruncate(fileno(json), 0);  
+        
+        ftruncate(fileno(json), 0);    
+        fseek(json, 0, SEEK_SET);  
+        
+        
         fprintf(json, "{\n");
         
         log_uptime();
@@ -54,8 +57,8 @@ int main()
         fflush(json);
       
         mqtt_publish();
-      
-        sleep(10);
+
+        sleep(15);
     }
     fclose(json);
     
@@ -90,7 +93,13 @@ int log_cpu_usage()
       perror("Could not open /proc/stat");
       return -1;
     }
-    char buffer[BUF_SIZE];
+    char * buffer = (char *)calloc(BUF_SIZE,sizeof(char));
+    if (!buffer)
+    {
+        perror("Memory allocation failed");
+        fclose(fp);
+        return -1;
+    }
     fgets(buffer, BUF_SIZE, fp);
     unsigned long long int user, nice, system, idle;
     sscanf(buffer, "cpu %llu %llu %llu %llu", &user, &nice, &system, &idle);
@@ -99,6 +108,7 @@ int log_cpu_usage()
     fprintf(json,"\t\"CPU_System_Time\":\"%llu\",\n",system);
     fprintf(json,"\t\"CPU_Idle_Time\":\"%llu\",\n",idle); 
     fflush(json);
+    free(buffer);
 }
 /*
 int log_cpu_temp() 
@@ -124,32 +134,42 @@ int log_network_traffic()
       perror("Could not open /proc/net/dev");
       return -1;
     }
-    char buffer[BUF_SIZE];
+    char * buffer = (char *)calloc(512,sizeof(char));
+    if (!buffer)
+    {
+        perror("Memory allocation failed");
+        fclose(fp);
+        return -1;
+    }
     for(int i = 0; i < 2; i++) 
-      fgets(buffer, BUF_SIZE, fp); // Skip headers
-    while (fgets(buffer, BUF_SIZE, fp))
+      fgets(buffer, 512, fp); // Skip headers
+    while (fgets(buffer, 512, fp))
     {
         char iface[16];
         unsigned long rx_bytes, tx_bytes;
-        sscanf(buffer, "%s %lu %*s %*s %*s %*s %*s %*s %*s %lu", iface, &rx_bytes, &tx_bytes);
-        iface[strlen(iface)-1] = 0; // Remove trailing ':'
-        fprintf(json,"\t\"Interface_%s_RX_(Bytes)\":\"%lu\",\n",iface, rx_bytes);
-        fprintf(json,"\t\"Interface_%s_TX_(Bytes)\":\"%lu\",\n",iface, tx_bytes);
-        fflush(json);
+        if (sscanf(buffer, "%15s %lu %*s %*s %*s %*s %*s %*s %*s %lu", iface, &rx_bytes, &tx_bytes) == 3)
+        {
+            iface[strcspn(iface, ":")] = '\0'; // Safe colon removal
+            fprintf(json, "\t\"Interface_%s_RX_(Bytes)\":\"%lu\",\n", iface, rx_bytes);
+            fprintf(json, "\t\"Interface_%s_TX_(Bytes)\":\"%lu\",\n", iface, tx_bytes);
+            fflush(json);
+        }
     }
+    free(buffer);
     fclose(fp);
 }
 
 int log_memory_usage() 
-{ struct mosquitto *mosq = NULL;
+{ 
     struct sysinfo info;
     sysinfo(&info);
+    struct mallinfo2 mi = mallinfo2();
     fprintf(json,"\t\"Total_Memory_(MB)\":\"%lu\",\n",info.totalram / (1024 * 1024));
     fprintf(json,"\t\"Free_Memory_(MB)\":\"%lu\",\n",info.freeram / (1024 * 1024));
     fprintf(json,"\t\"Used_Memory_(MB)\":\"%lu\",\n",(info.totalram - info.freeram) / (1024 * 1024));
     
-    struct mallinfo2 mi = mallinfo2();
     fprintf(json,"\t\"Used_Heap_Memory_(KB)\":\"%ld\",\n",mi.uordblks / 1024);
+    fprintf(stdout, "Heap in KB: %ld\n", mi.uordblks / 1024);
     fflush(json);
 }
 
@@ -178,6 +198,7 @@ int mqtt_publish_initialisation()
         fprintf(stderr, "Failed to create Mosquitto instance\n");
         return -1;
     }
+        fprintf(stderr, "Created Mosquitto instance\n");
 
     if (mosquitto_connect(mosq, BROKER, 1883, 60) != MOSQ_ERR_SUCCESS) //mosq = name of client, BROKER = host name, 1883 = port no (Unsecure MQTT Port), 60 = keep-alive interval in sec 
     {
@@ -186,21 +207,29 @@ int mqtt_publish_initialisation()
         mosquitto_lib_cleanup();
         return -1;
     }    
-
+        fprintf(stdout, "Connected to MQTT broker\n");
 }
 
 void mqtt_publish()
 {
     fseek(json, 0, SEEK_SET);    
-    char buffer[BUF_SIZE] = {0};
-    fread(buffer, 1, sizeof(buffer)-1, json);
-    buffer[BUF_SIZE]='\0';
+    char * buffer = (char *)calloc(BUF_SIZE, sizeof(char));
+    if (!buffer) 
+    {
+      perror("Could not allocate memory to MQTT Buffer");
+      return;
+    }
+    size_t buff_length = fread(buffer, 1, BUF_SIZE-1, json);
+    buffer[buff_length]='\0';
     
     int rc = mosquitto_publish(mosq, NULL, TOPIC, strlen(buffer), buffer, 0, false);
+
     if (rc != MOSQ_ERR_SUCCESS) 
     {
       fprintf(stderr, "Failed to publish: %s\n", mosquitto_strerror(rc));
     }
+    free(buffer);
+
     /*
     NULL = message ID, TOPIC = messege categorised, strlen(buffer) = length of the message (bytes), buffer = actual message location, 0: The QoS (at most once), false: Retain flag off (will not retain the message after it is delivered)
     

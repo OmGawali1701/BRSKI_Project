@@ -12,9 +12,10 @@ ExecStart=/usr/local/bin/Static_Behavioural_Attributes
 # Restart the service on failure (e.g., crash)
 Restart=on-failure
 
-# Optional: restrict access for security
-User=nobody
-Group=nogroup
+DynamicUser=yes
+
+StandardOutput=append:/var/log/Behavioural_Attributes.log
+StandardError=append:/var/log/Behavioural_Attributes.log
 
 # Set the working directory (optional)
 WorkingDirectory=/tmp
@@ -22,16 +23,6 @@ WorkingDirectory=/tmp
 # Use private temp directory (optional)
 PrivateTmp=true
 
-# Log output to systemd journal
-StandardOutput=journal
-StandardError=journal
-
 [Install]
 WantedBy=multi-user.target
 
-#sudo systemctl daemon-reexec
-#sudo systemctl daemon-reload
-#sudo systemctl enable Behavioural_Attributes
-#sudo systemctl status Behavioural_Attributes
-#sudo systemctl start Behavioural_Attributes
-#sudo systemctl status Behavioural_Attributes

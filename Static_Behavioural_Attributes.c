@@ -29,6 +29,10 @@ void mqtt_publish();
 
 int main() 
 {
+  setvbuf(stdout, NULL, _IONBF, 0);
+  setvbuf(stderr, NULL, _IONBF, 0);
+
+  fprintf(stdout, "Program Stareted\n");
   json = fopen("/tmp/Behavioral_Attributes_data.json","w+");
     if(!json)
     {
@@ -61,12 +65,16 @@ int main()
         sleep(15);
     }
     fclose(json);
+    fprintf(stdout, "File Closed \"/tmp/Behavioral_Attributes_data.json\"\n");
     
     mosquitto_disconnect(mosq);
-    mosquitto_destroy(mosq);
-    mosquitto_lib_cleanup();
+    fprintf(stdout, "MQTT Broker Disconnected\n");
     
-    return 0;
+    mosquitto_destroy(mosq);
+    fprintf(stdout, "Mosquitto Instance Destroyed\n");    
+    
+    mosquitto_lib_cleanup();
+    fprintf(stdout, "Mosquitto Lib Cleared\n");
 }
 
 int log_uptime() 
@@ -74,6 +82,7 @@ int log_uptime()
     FILE *fp = fopen("/proc/uptime", "r");
     if (!fp) 
     {
+      fprintf(stderr, "Could not open /proc/uptime\n");
       perror("Could not open /proc/uptime");
       return -1;
     }
@@ -90,6 +99,7 @@ int log_cpu_usage()
     FILE *fp = fopen("/proc/stat", "r");
     if (!fp) 
     {
+      fprintf(stderr, "Could not open /proc/stat\n");    
       perror("Could not open /proc/stat");
       return -1;
     }
@@ -131,13 +141,14 @@ int log_network_traffic()
     FILE *fp = fopen("/proc/net/dev", "r");
     if (!fp) 
     {
+      fprintf(stderr, "Could not open /proc/net/dev\n");
       perror("Could not open /proc/net/dev");
       return -1;
     }
     char * buffer = (char *)calloc(512,sizeof(char));
     if (!buffer)
     {
-        perror("Memory allocation failed");
+        perror("Memory Allocation Failed");
         fclose(fp);
         return -1;
     }
@@ -170,6 +181,7 @@ int log_memory_usage()
     
     fprintf(json,"\t\"Used_Heap_Memory_(KB)\":\"%ld\",\n",mi.uordblks / 1024);
     fprintf(stdout, "Heap in KB: %ld\n", mi.uordblks / 1024);
+    
     fflush(json);
 }
 
@@ -195,19 +207,19 @@ int mqtt_publish_initialisation()
                                            //  NULL = user-defined object 
     if (!mosq) 
     {
-        fprintf(stderr, "Failed to create Mosquitto instance\n");
+        fprintf(stderr, "Failed To Create Mosquitto Instance\n");
         return -1;
     }
-        fprintf(stderr, "Created Mosquitto instance\n");
+        fprintf(stdout, "Created Mosquitto Instance\n");
 
     if (mosquitto_connect(mosq, BROKER, 1883, 60) != MOSQ_ERR_SUCCESS) //mosq = name of client, BROKER = host name, 1883 = port no (Unsecure MQTT Port), 60 = keep-alive interval in sec 
     {
-        fprintf(stderr, "Unable to connect to MQTT broker\n");
+        fprintf(stderr, "Unable To Connect To MQTT Broker\n");
         mosquitto_destroy(mosq);
         mosquitto_lib_cleanup();
         return -1;
     }    
-        fprintf(stdout, "Connected to MQTT broker\n");
+        fprintf(stdout, "Connected To MQTT Broker\n");
 }
 
 void mqtt_publish()
@@ -228,6 +240,7 @@ void mqtt_publish()
     {
       fprintf(stderr, "Failed to publish: %s\n", mosquitto_strerror(rc));
     }
+    fprintf(stderr, "Data Published\n");
     free(buffer);
 
     /*

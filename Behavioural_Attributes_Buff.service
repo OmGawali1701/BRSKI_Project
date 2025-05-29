@@ -1,0 +1,23 @@
+[Unit]
+Description=Runnig process as Demon which collects Behavioural Data  
+After=network.target
+
+[Service]
+Type=simple
+
+ExecStart=/usr/local/bin/Behavioural_Attributes_Buff
+
+Restart=on-failure
+
+DynamicUser=yes
+
+StandardOutput=append:/var/log/Behavioural_Attributes.log
+StandardError=append:/var/log/Behavioural_Attributes.log
+
+WorkingDirectory=/tmp
+
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+

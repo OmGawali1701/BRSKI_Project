@@ -15,7 +15,7 @@
 #define JSON_BUF_SIZE 2048
 
 #define TOPIC     "device/data"
-#define BROKER    "localhost"
+#define BROKER    "10.182.3.33"
  
 struct mosquitto *mosq = NULL;
 char JSON[JSON_BUF_SIZE];
@@ -28,6 +28,7 @@ volatile sig_atomic_t Broker_Connection_Flag =0;
 
 void build_json_payload();
 void device_id();
+void device_static_data();
 void log_uptime();
 void log_cpu_usage();
 void log_cpu_temp();
@@ -71,6 +72,7 @@ int main()
 void build_json_payload()
 {
         device_id();
+        device_static_data();
         log_uptime();
         log_cpu_temp();
         log_cpu_usage();
@@ -99,6 +101,106 @@ void device_id()
       write_to_JSON("{\n\t\"Device_ID\":\"%s\",\n",device_id);
 }
 
+void device_static_data()
+{
+    char os[128] = {0};
+    char hostname[128] = {0};
+    char line[256];
+    
+    FILE *os_fp = fopen("/etc/os-release", "r");
+    if (!os_fp) 
+    {
+        fprintf(stderr, "Could not open /etc/os-release: %s\n", strerror(errno));
+        fprintf(stdout, "Skipping OS Name Collection\n");
+    } 
+    else 
+    {
+        while (fgets(os, sizeof(os), os_fp)) 
+        {
+            if (strncmp(os, "PRETTY_NAME=", 12) == 0) 
+            {
+                char *value = strchr(os, '=');
+                if (value) 
+                {
+                    value++;
+                    value[strcspn(value, "\n\"")] = '\0';
+                }
+                break;
+            }
+        }
+        fclose(os_fp);
+    }
+
+    FILE *host_fp = fopen("/etc/hostname", "r");
+    if(!host_fp)
+    {
+        fprintf(stderr, "Could not open /etc/hostname: %s\n", strerror(errno));
+        fprintf(stdout, "Skipping Hostname Collection\n");
+    }
+    else 
+    {
+        fgets(hostname, sizeof(hostname), host_fp);
+        hostname[strcspn(hostname, "\n")] = '\0';
+        printf("Hostname: %s\n", hostname);
+        fclose(host_fp);
+    }
+    
+    FILE *uptime_fp = fopen("/proc/uptime", "r");
+    if (uptime_fp) {
+        double uptime;
+        fscanf(uptime_fp, "%lf", &uptime);
+        printf("Uptime: %.0f seconds\n", uptime);
+        fclose(uptime_fp);
+    }
+
+    // Kernel version
+    FILE *kernel_fp = fopen("/proc/version", "r");
+    if (kernel_fp) {
+        fgets(line, sizeof(line), kernel_fp);
+        printf("Kernel: %s", line);
+        fclose(kernel_fp);
+    }
+
+    // Installed Packages (Debian-based)
+    int package_count = 0;
+    FILE *pkg_fp = fopen("/var/lib/dpkg/status", "r");
+    if (pkg_fp) {
+        while (fgets(line, sizeof(line), pkg_fp)) {
+            if (strncmp(line, "Package:", 8) == 0)
+                package_count++;
+        }
+        fclose(pkg_fp);
+        printf("Installed Packages: %d\n", package_count);
+    }
+
+    // CPU Info
+    FILE *cpuinfo_fp = fopen("/proc/cpuinfo", "r");
+    if (cpuinfo_fp) {
+        while (fgets(line, sizeof(line), cpuinfo_fp)) {
+            if (strncmp(line, "model name", 10) == 0) {
+                char *value = strchr(line, ':');
+                if (value) {
+                    value += 2;
+                    printf("CPU Model: %s", value);
+                    break;
+                }
+            }
+        }
+        fclose(cpuinfo_fp);
+    }
+
+    // CPU Core Count
+    int core_count = 0;
+    FILE *stat_fp = fopen("/proc/stat", "r");
+    if (stat_fp) {
+        while (fgets(line, sizeof(line), stat_fp)) {
+            if (strncmp(line, "cpu", 3) == 0 && isdigit(line[3]))
+                core_count++;
+        }
+        fclose(stat_fp);
+        printf("CPU Cores: %d\n", core_count);
+    }
+}
 void log_uptime() 
 {
     FILE *fp = fopen("/proc/uptime", "r");

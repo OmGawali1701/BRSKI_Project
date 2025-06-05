@@ -1,0 +1,87 @@
+{
+  "stats_time": "2025-06-04 17:08:44.252011",
+  "stats": {
+    "memory_related": {
+      "memory": {
+        "mem_total": "481 MB",
+        "mem_free": "24 MB",
+        "mem_available": "392 MB",
+        "mem_used": "89 MB",
+        "buffer_cache": "381 MB"
+      },
+      "swap": {
+        "swap_total": "0 MB",
+        "swap_used": "0 MB",
+        "swap_free": "0 MB"
+      }
+    },
+    "networks": {
+      "host": {
+        "lo": {
+          "ip_addr": "127.0.0.1",
+          "mac_addr": "00:00:00:00:00:00",
+          "data_flow": {
+            "recvd_bytes": "0 MB",
+            "recvd_packets": "104",
+            "sent_bytes": "0 MB",
+            "sent_packets": "104"
+          }
+        },
+        "end1": {
+          "ip_addr": "10.182.2.216",
+          "mac_addr": "00:04:9f:04:b2:bf",
+          "data_flow": {
+            "recvd_bytes": "20 MB",
+            "recvd_packets": "299,883",
+            "sent_bytes": "41 MB",
+            "sent_packets": "14,556"
+          }
+        },
+        "sit0": {
+          "ip_addr": "N/A",
+          "mac_addr": "00:00:00:00",
+          "data_flow": {
+            "recvd_bytes": "0 MB",
+            "recvd_packets": "0",
+            "sent_bytes": "0 MB",
+            "sent_packets": "0"
+          }
+        },
+        "end0": {
+          "ip_addr": "N/A",
+          "mac_addr": "00:04:9f:04:b2:be",
+          "data_flow": {
+            "recvd_bytes": "0 MB",
+            "recvd_packets": "0",
+            "sent_bytes": "0 MB",
+            "sent_packets": "0"
+          }
+        }
+      },
+      "dns_resolve_file": {
+        "DNS": "10.182.0.11",
+        "DOMAINNAME": "blr1.cdac.in"
+      }
+    },
+    "OS": "Debian GNU/Linux 12 (bookworm)",
+    "hostname": "sandbox",
+    "uptime_seconds": 8657.23,
+    "uptime_pretty": "0 days, 2 hours, 24 mins",
+    "kernel": "6.6.23-gb586a521770e-dirty",
+    "number of installed packages": "403 (dpkg)",
+    "cpu usage": {
+      "usage_avg(%)": 98.0,
+      "usage_per_core(%)": [
+        0.99
+      ]
+    },
+    "cpu info": "ARMv7 Processor rev 5 (v7l)",
+    "thermals_information": {
+      "fan": "NA",
+      "cpu temperatures(°C)": {
+        "core0": 35.457
+      }
+    }
+  }
+}
+

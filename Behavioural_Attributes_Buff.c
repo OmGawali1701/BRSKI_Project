@@ -15,7 +15,7 @@
 #define JSON_BUF_SIZE 2048
 
 #define TOPIC     "device/data"
-#define BROKER    "10.182.3.33"
+#define BROKER    "localhost"
  
 struct mosquitto *mosq = NULL;
 char JSON[JSON_BUF_SIZE];
@@ -103,104 +103,145 @@ void device_id()
 
 void device_static_data()
 {
-    char os[128] = {0};
-    char hostname[128] = {0};
+    char os[128] = "Unknown";
+    char hostname[128] = "Unknown";
+    char kernel[256] = "Unknown";
+    char cpu_model[256] = "Unknown";
+    int package_count = 0;
+    int core_count = 0;
     char line[256];
     
-    FILE *os_fp = fopen("/etc/os-release", "r");
-    if (!os_fp) 
+    FILE *fp = fopen("/etc/os-release", "r");
+    if (!fp) 
     {
         fprintf(stderr, "Could not open /etc/os-release: %s\n", strerror(errno));
         fprintf(stdout, "Skipping OS Name Collection\n");
     } 
     else 
     {
-        while (fgets(os, sizeof(os), os_fp)) 
+        while (fgets(os, sizeof(os), fp)) 
         {
             if (strncmp(os, "PRETTY_NAME=", 12) == 0) 
             {
-                char *value = strchr(os, '=');
-                if (value) 
+                char * val = strchr(os, '=');
+                
+                if (val) 
                 {
-                    value++;
-                    value[strcspn(value, "\n\"")] = '\0';
-                }
+                val++; 
+                if (*val == '"')
+                    val++; 
+                val[strcspn(val, "\"\n")] = '\0'; 
+                memmove(os, val, strlen(val) + 1); 
+            }
                 break;
             }
         }
-        fclose(os_fp);
+        fclose(fp);
     }
 
-    FILE *host_fp = fopen("/etc/hostname", "r");
-    if(!host_fp)
+    fp = fopen("/etc/hostname", "r");
+    if(!fp)
     {
         fprintf(stderr, "Could not open /etc/hostname: %s\n", strerror(errno));
         fprintf(stdout, "Skipping Hostname Collection\n");
     }
     else 
     {
-        fgets(hostname, sizeof(hostname), host_fp);
+        fgets(hostname, sizeof(hostname), fp);
         hostname[strcspn(hostname, "\n")] = '\0';
-        printf("Hostname: %s\n", hostname);
-        fclose(host_fp);
+        fclose(fp);
     }
+
+    fp = fopen("/proc/version", "r");
     
-    FILE *uptime_fp = fopen("/proc/uptime", "r");
-    if (uptime_fp) {
-        double uptime;
-        fscanf(uptime_fp, "%lf", &uptime);
-        printf("Uptime: %.0f seconds\n", uptime);
-        fclose(uptime_fp);
+    if(!fp)
+    {
+        fprintf(stderr, "Could not open /proc/version: %s\n", strerror(errno));
+        fprintf(stdout, "Skipping Kernel Information Collection\n");
+    }
+    else 
+    {        
+        if(fgets(kernel, sizeof(kernel), fp))
+        {
+        char val[128]= {0};
+        if(sscanf(kernel,"%*s %*s %127s",val) == 1)
+            {
+                strncpy(kernel,val,sizeof(val));
+                kernel[sizeof(kernel)-1]= '\0';
+            }
+        }
+        fclose(fp);
     }
 
-    // Kernel version
-    FILE *kernel_fp = fopen("/proc/version", "r");
-    if (kernel_fp) {
-        fgets(line, sizeof(line), kernel_fp);
-        printf("Kernel: %s", line);
-        fclose(kernel_fp);
-    }
-
-    // Installed Packages (Debian-based)
-    int package_count = 0;
-    FILE *pkg_fp = fopen("/var/lib/dpkg/status", "r");
-    if (pkg_fp) {
-        while (fgets(line, sizeof(line), pkg_fp)) {
+    fp = fopen("/var/lib/dpkg/status", "r");
+    
+    if(!fp)
+    {
+        fprintf(stderr, "Could not open /var/lib/dpkg/status: %s\n", strerror(errno));
+        fprintf(stdout, "Skipping Packages Information Collection\n");
+    }    
+    else 
+    {
+        while (fgets(line, sizeof(line), fp)) 
+        {
             if (strncmp(line, "Package:", 8) == 0)
                 package_count++;
         }
-        fclose(pkg_fp);
-        printf("Installed Packages: %d\n", package_count);
+        fclose(fp);
     }
 
-    // CPU Info
-    FILE *cpuinfo_fp = fopen("/proc/cpuinfo", "r");
-    if (cpuinfo_fp) {
-        while (fgets(line, sizeof(line), cpuinfo_fp)) {
-            if (strncmp(line, "model name", 10) == 0) {
-                char *value = strchr(line, ':');
-                if (value) {
-                    value += 2;
-                    printf("CPU Model: %s", value);
+    fp = fopen("/proc/cpuinfo", "r");
+    if(!fp)
+    {
+        fprintf(stderr, "Could not open /proc/cpuinfo: %s\n", strerror(errno));
+        fprintf(stdout, "Skipping CPU Information Collection\n");
+    }    
+    
+    else 
+    {
+        while (fgets(line, sizeof(line), fp))
+        {
+            if (strncmp(line, "model name", 10) == 0) 
+            {
+                char *val = strchr(line, ':');
+                if (val) 
+                {
+                    val += 2;
+                    val[strcspn(val, "\n")] = '\0';
+                    strncpy(cpu_model, val, sizeof(cpu_model));
                     break;
                 }
             }
         }
-        fclose(cpuinfo_fp);
+        fclose(fp);
     }
 
-    // CPU Core Count
-    int core_count = 0;
-    FILE *stat_fp = fopen("/proc/stat", "r");
-    if (stat_fp) {
-        while (fgets(line, sizeof(line), stat_fp)) {
-            if (strncmp(line, "cpu", 3) == 0 && isdigit(line[3]))
+    fp = fopen("/proc/stat", "r");
+    if(!fp)
+    {
+        fprintf(stderr, "Could not open /proc/stat: %s\n", strerror(errno));
+        fprintf(stdout, "Skipping CPU Core Count Collection\n");
+    }
+    else
+    {
+        while (fgets(line, sizeof(line), fp)) 
+        {
+            if (strncmp(line, "cpu", 3) == 0 && (line[3] >= '0' && line[3] <= '9'))
                 core_count++;
         }
-        fclose(stat_fp);
-        printf("CPU Cores: %d\n", core_count);
+        fclose(fp);
     }
+    write_to_JSON(
+                  "\n\t\"Device_Static_Data\":{"
+                  "\n\t\t\t\"OS_Name\":\"%s\","
+                  "\n\t\t\t\"Hostname\":\"%s\","
+                  "\n\t\t\t\"CPU_Model\":\"%s\","
+                  "\n\t\t\t\"CPU_Core_Count\":\"%d\","                  
+                  "\n\t\t\t\"Kernel\":\"%s\","
+                  "\n\t\t\t\"Installed_Package\":\"%d\""                     
+                  "\n\t\t\t},\n",os, hostname, cpu_model, core_count, kernel, package_count);      
 }
+
 void log_uptime() 
 {
     FILE *fp = fopen("/proc/uptime", "r");
@@ -257,19 +298,56 @@ void log_cpu_usage()
 }
 
 void log_cpu_temp() 
-{
-    FILE *fp = fopen("/sys/class/thermal/thermal_zone0/temp", "r");
-    if (!fp) 
+{ 
+    char path[64], type[64];
+    int temp, zone = 0;
+
+    while (1) 
     {
-      fprintf(stderr, "Temperature sensor not found. Skipping Temp read : %s\n",strerror(errno));   
-    }
-    else
-    {
-    int temp;
-    fscanf(fp, "%d", &temp);
-    fclose(fp);
-    write_to_JSON("\n\t\"CPU_Temperature_(°C)\":\"%.2f\",\n",temp / 1000.0);    
-    }
+        snprintf(path, sizeof(path), "/sys/class/thermal/thermal_zone%d/type", zone);
+        FILE *fp = fopen(path, "r");
+        if (!fp) 
+        {
+          if(zone == 0)
+          {
+            fprintf(stderr, "Temperature sensor not found. Skipping Temp read : %s\n",strerror(errno));   
+            break;
+          }
+          else
+          {
+              if(JSON[JSON_Index-1] == ',')
+                  JSON_Index--;
+              write_to_JSON("\n\t\t\t},\n");
+            break;
+          }
+        }  
+
+        if (fgets(type, sizeof(type), fp))
+        {
+            type[strcspn(type, "\n")] = '\0'; 
+        }
+        fclose(fp);
+
+        if (strstr(type, "x86_pkg_temp") || strstr(type, "cpu") || strstr(type, "core")) 
+        {
+            snprintf(path, sizeof(path), "/sys/class/thermal/thermal_zone%d/temp", zone);
+            fp = fopen(path, "r");
+            if (fp && fscanf(fp, "%d", &temp) == 1) 
+            {
+                if(zone == 0)
+                    write_to_JSON("\n\t\"CPU_Core_Temperature\":{");
+                    
+                write_to_JSON("\n\t\t\t\"CPU_Core%d_Temperature_(°C)\":\"%.2f\",", zone, temp / 1000.0);
+                fclose(fp);
+            } 
+            else 
+            {
+                if (fp) 
+                fclose(fp);
+            }
+        }
+        zone++;
+    }   
 }
 
 void log_network_traffic() 
@@ -295,15 +373,17 @@ void log_network_traffic()
     while (fgets(buffer, 512, fp))
     {
         char iface[16];
-        unsigned long rx_bytes, tx_bytes;
-        if (sscanf(buffer, "%15s %lu %*s %*s %*s %*s %*s %*s %*s %lu", iface, &rx_bytes, &tx_bytes) == 3)
+        unsigned long rx_bytes, tx_bytes, rx_packets, tx_packets;
+        if (sscanf(buffer, "%15s %lu %lu %*s %*s %*s %*s %*s %*s %lu %lu", iface, &rx_bytes, &rx_packets, &tx_bytes, &tx_packets) == 5)
         {
             iface[strcspn(iface, ":")] = '\0'; // Safe colon removal
             write_to_JSON(
                          "\n\t\t\t\"%s\":{"
                          "\n\t\t\t\t\"Interface_RX_(Bytes)\":\"%lu\","
                          "\n\t\t\t\t\"Interface_TX_(Bytes)\":\"%lu\""
-                         "\n\t\t\t\t},\n", iface, rx_bytes, tx_bytes );
+                         "\n\t\t\t\t\"Interface_RX_(Packets)\":\"%lu\""
+                         "\n\t\t\t\t\"Interface_TX_(Packets)\":\"%lu\""
+                         "\n\t\t\t\t},\n", iface, rx_bytes, tx_bytes, rx_packets, tx_packets );
         }
     }
     free(buffer);

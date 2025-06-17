@@ -15,8 +15,12 @@
 #define JSON_BUF_SIZE 2048
 
 #define TOPIC     "device/data"
-#define BROKER    "localhost"
- 
+#define BROKER    "10.182.3.33"
+
+#define CA_CERT_PATH "/home/om/cert/ca.crt"
+#define CLIENT_CERT_PATH "/home/om/cert/client.crt"
+#define CLIENT_PVT_KEY_PATH "/home/om/key/client.key"
+
 struct mosquitto *mosq = NULL;
 char JSON[JSON_BUF_SIZE];
 int JSON_Index = 0;
@@ -328,7 +332,7 @@ void log_cpu_temp()
         }
         fclose(fp);
 
-        if (strstr(type, "x86_pkg_temp") || strstr(type, "cpu") || strstr(type, "core")) 
+        if (strstr(type, "x86_pkg_temp") || strstr(type, "cpu") || strstr(type, "core") || strstr(type, "imx_thermal_zone")) 
         {
             snprintf(path, sizeof(path), "/sys/class/thermal/thermal_zone%d/temp", zone);
             fp = fopen(path, "r");
@@ -380,8 +384,8 @@ void log_network_traffic()
             write_to_JSON(
                          "\n\t\t\t\"%s\":{"
                          "\n\t\t\t\t\"Interface_RX_(Bytes)\":\"%lu\","
-                         "\n\t\t\t\t\"Interface_TX_(Bytes)\":\"%lu\""
-                         "\n\t\t\t\t\"Interface_RX_(Packets)\":\"%lu\""
+                         "\n\t\t\t\t\"Interface_TX_(Bytes)\":\"%lu\","
+                         "\n\t\t\t\t\"Interface_RX_(Packets)\":\"%lu\","
                          "\n\t\t\t\t\"Interface_TX_(Packets)\":\"%lu\""
                          "\n\t\t\t\t},\n", iface, rx_bytes, tx_bytes, rx_packets, tx_packets );
         }
@@ -447,12 +451,22 @@ void mqtt_publish_initialisation()
         exit(EXIT_FAILURE);
     }
         fprintf(stdout, "Created Mosquitto Instance\n");
+    
+     int tls_rc = mosquitto_tls_set(mosq,CA_CERT_PATH, NULL,CLIENT_CERT_PATH,CLIENT_PVT_KEY_PATH,NULL);
 
+    if (tls_rc != MOSQ_ERR_SUCCESS) 
+    {
+        fprintf(stderr, "Failed to set TLS options: %s\n", mosquitto_strerror(tls_rc));
+        exit(EXIT_FAILURE);
+    }
+        fprintf(stdout, "Mosquitto TLS Setup Done\n");
+    mosquitto_tls_insecure_set(mosq, false);
+    
     int attempts = 0;
     for (attempts ; attempts < 5; ++attempts) 
     {
 
-    int rc = mosquitto_connect(mosq, BROKER, 1883, 60);  //mosq = name of client, BROKER = host name, 1883 = port no (Unsecure MQTT Port), 60 = keep-alive interval in sec 
+    int rc = mosquitto_connect(mosq, BROKER, 8883, 60);  //mosq = name of client, BROKER = host name, 1883 = port no (Unsecure MQTT Port), 60 = keep-alive interval in sec 
     if(rc == MOSQ_ERR_SUCCESS)
     {
         Broker_Connection_Flag = 1;
@@ -480,10 +494,11 @@ void mqtt_publish()
     {
       fprintf(stderr, "Failed to publish: %s\n", mosquitto_strerror(rc));
     }
-    JSON_Index = 0;
-    
+    else
+    {
     fprintf(stderr, "Data Published\n");
-
+    }
+    JSON_Index = 0;
     /*
     NULL = message ID, TOPIC = messege categorised, strlen(buffer) = length of the message (bytes), buffer = actual message location, 0: The QoS (at most once), false: Retain flag off (will not retain the message after it is delivered)
     

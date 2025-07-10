@@ -30,6 +30,7 @@ volatile sig_atomic_t Exit_Signal_Flag = 0;
 volatile sig_atomic_t Clean_Up_Flag = 0;
 volatile sig_atomic_t Broker_Connection_Flag =0;
 
+void time_stamp();
 void build_json_payload();
 void device_id();
 void device_static_data();
@@ -75,6 +76,9 @@ int main()
 
 void build_json_payload()
 {
+        write_to_JSON("{\n");
+        
+        time_stamp();
         device_id();
         device_static_data();
         log_uptime();
@@ -89,6 +93,15 @@ void build_json_payload()
         JSON[JSON_Index] = '\0';
 }
 
+void time_stamp()
+{
+    time_t now = time(NULL);
+    struct tm *tm_info = gmtime(&now);
+    char time_str[64];
+    strftime(time_str, sizeof(time_str), "%Y-%m-%dT%H:%M:%SZ", tm_info);
+    write_to_JSON("\t\"Timestamp\":\"%s\",\n", time_str);
+}
+
 void device_id()
 {
     char device_id[128] = {0};
@@ -98,11 +111,13 @@ void device_id()
       fprintf(stderr,"Could not open /etc/machine-id: %s\n",strerror(errno));
       fprintf(stdout,"Skipping Device ID Creation\n");
     }
-    
+    else
+    {
       fgets(device_id, sizeof(device_id), fp);
       device_id[strcspn(device_id, "\n")] = '\0'; 
       fclose(fp);
-      write_to_JSON("{\n\t\"Device_ID\":\"%s\",\n",device_id);
+      write_to_JSON("\t\"Device_ID\":\"%s\",\n",device_id);
+    }
 }
 
 void device_static_data()
@@ -442,6 +457,9 @@ void log_disk_usage()
 
 void mqtt_publish_initialisation()
 {
+    const char *online_payload = "{\"status\": \"online\"}";
+    const char *will_payload = "{\"status\": \"disconnected_unexpectedly\"}";
+
     mosquitto_lib_init();
     mosq = mosquitto_new(NULL, true, NULL);//  NULL = the client ID, true = client should automatically reconnect when connection is lost 
                                            //  NULL = user-defined object 
@@ -451,6 +469,15 @@ void mqtt_publish_initialisation()
         exit(EXIT_FAILURE);
     }
         fprintf(stdout, "Created Mosquitto Instance\n");
+    
+    int lwt_rc = mosquitto_will_set(mosq, TOPIC, strlen(will_payload),
+                                    will_payload, 1, false);
+    if (lwt_rc != MOSQ_ERR_SUCCESS) 
+    {
+        fprintf(stderr, "Failed to set Last Will: %s\n", mosquitto_strerror(lwt_rc));
+        exit(EXIT_FAILURE);
+    }
+    fprintf(stdout, "LWT Set Successfully\n");
     
      int tls_rc = mosquitto_tls_set(mosq,CA_CERT_PATH, NULL,CLIENT_CERT_PATH,CLIENT_PVT_KEY_PATH,NULL);
 
@@ -471,6 +498,11 @@ void mqtt_publish_initialisation()
     {
         Broker_Connection_Flag = 1;
         fprintf(stdout, "Connected To MQTT Broker\n");
+        
+        mosquitto_publish(mosq, NULL, TOPIC, strlen(online_payload),
+                  online_payload, 1, false);
+        mosquitto_loop_start(mosq);
+
         break;
     }
         fprintf(stderr, "Unable To Connect To MQTT Broker: %s\nRetrying.....\n attempt no. %d\n", mosquitto_strerror(rc),attempts);
@@ -571,8 +603,14 @@ void clean_up_resources()
     
     if(Broker_Connection_Flag == 1)
     {
+    const char *offline_payload = "{\"status\": \"offline\"}";
+    mosquitto_publish(mosq, NULL, TOPIC, strlen(offline_payload), offline_payload, 1, false);
+    sleep(1);  // Give time to send
     mosquitto_disconnect(mosq);
+    mosquitto_disconnect(mosq);
+    
     fprintf(stdout, "MQTT Broker Disconnected\n");
+    
     }
     
     mosquitto_destroy(mosq);

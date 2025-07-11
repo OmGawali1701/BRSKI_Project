@@ -1,18 +1,32 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <string.h>
-#include <unistd.h>
-#include <time.h>
-#include <sys/statvfs.h>
-#include <sys/sysinfo.h>
-#include <malloc.h>
-#include <mosquitto.h>
-#include <signal.h>
 #include <errno.h>
-#include <stdarg.h> 
+#include <time.h>
+#include <unistd.h>
+#include <utmp.h>
+#include <fcntl.h>
+
+#include <sys/types.h>
+#include <sys/statvfs.h>
+#include <sys/stat.h>
+#include <sys/sysinfo.h>
+#include <sys/ioctl.h>
+
+#include <net/if.h>
+#include <arpa/inet.h>
+
+#include <malloc.h>
+#include <signal.h>
+
+#include <mosquitto.h>
+
 
 #define BUF_SIZE 1024
 #define JSON_BUF_SIZE 2048
+
+#define MAX_EVENTS 5
 
 #define TOPIC     "device/data"
 #define BROKER    "10.182.3.33"
@@ -20,6 +34,9 @@
 #define CA_CERT_PATH "/home/om/cert/ca.crt"
 #define CLIENT_CERT_PATH "/home/om/cert/client.crt"
 #define CLIENT_PVT_KEY_PATH "/home/om/key/client.key"
+
+#define MAC_PATH_TEMPLATE "/sys/class/net/%s/address"
+#define MAC_ADDR_LEN 32
 
 struct mosquitto *mosq = NULL;
 char JSON[JSON_BUF_SIZE];
@@ -38,8 +55,12 @@ void log_uptime();
 void log_cpu_usage();
 void log_cpu_temp();
 void log_network_traffic();
+int get_ip_address(const char *, char *, size_t) ;
+int get_mac_address(const char *, char *, size_t);
 void log_memory_usage();
 void log_disk_usage();
+void log_failed_logins();
+void log_reboots_shutdowns(); 
 
 void mqtt_publish_initialisation();
 void mqtt_publish();
@@ -87,6 +108,8 @@ void build_json_payload()
         log_network_traffic();
         log_memory_usage();
         log_disk_usage();
+        log_reboots_shutdowns();
+        log_failed_logins();
         
         write_to_JSON("}\n");
         
@@ -396,13 +419,22 @@ void log_network_traffic()
         if (sscanf(buffer, "%15s %lu %lu %*s %*s %*s %*s %*s %*s %lu %lu", iface, &rx_bytes, &rx_packets, &tx_bytes, &tx_packets) == 5)
         {
             iface[strcspn(iface, ":")] = '\0'; // Safe colon removal
+            
+            char ip[INET_ADDRSTRLEN] = "N/A";
+            char mac[MAC_ADDR_LEN] = "N/A";
+
+            get_ip_address(iface, ip, sizeof(ip));
+            get_mac_address(iface, mac, sizeof(mac));
+            
             write_to_JSON(
                          "\n\t\t\t\"%s\":{"
+                         "\n\t\t\t\t\"IP_Address\": \"%s\","
+                         "\n\t\t\t\t\"MAC_Address\": \"%s\","
                          "\n\t\t\t\t\"Interface_RX_(Bytes)\":\"%lu\","
                          "\n\t\t\t\t\"Interface_TX_(Bytes)\":\"%lu\","
                          "\n\t\t\t\t\"Interface_RX_(Packets)\":\"%lu\","
                          "\n\t\t\t\t\"Interface_TX_(Packets)\":\"%lu\""
-                         "\n\t\t\t\t},\n", iface, rx_bytes, tx_bytes, rx_packets, tx_packets );
+                         "\n\t\t\t\t},\n", iface, ip, mac, rx_bytes, tx_bytes, rx_packets, tx_packets );
         }
     }
     free(buffer);
@@ -415,6 +447,47 @@ void log_network_traffic()
     }
 
     write_to_JSON("\n\t},\n");
+}
+
+int get_ip_address(const char *iface, char *ip_buffer, size_t buflen) 
+{
+    int fd;
+    struct ifreq ifr;
+
+    fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) {
+        perror("socket");
+        return -1;
+    }
+
+    strncpy(ifr.ifr_name, iface, IFNAMSIZ - 1);
+    ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+
+    if (ioctl(fd, SIOCGIFADDR, &ifr) < 0) {
+        close(fd);
+        return -1;  // interface may not have IP
+    }
+
+    struct sockaddr_in *ipaddr = (struct sockaddr_in *)&ifr.ifr_addr;
+    strncpy(ip_buffer, inet_ntoa(ipaddr->sin_addr), buflen);
+    close(fd);
+    return 0;
+}
+
+int get_mac_address(const char *iface, char *mac_buffer, size_t buflen) 
+{
+    char path[128];
+    snprintf(path, sizeof(path), MAC_PATH_TEMPLATE, iface);
+    FILE *fp = fopen(path, "r");
+    if (!fp) return -1;
+
+    if (!fgets(mac_buffer, buflen, fp)) {
+        fclose(fp);
+        return -1;
+    }
+    mac_buffer[strcspn(mac_buffer, "\n")] = 0;
+    fclose(fp);
+    return 0;
 }
 
 void log_memory_usage() 
@@ -453,6 +526,107 @@ void log_disk_usage()
         fprintf(stderr, "statvfs failed: %s\n", strerror(errno));    
         exit(EXIT_FAILURE);
     }
+}
+
+void log_reboots_shutdowns() 
+{
+    FILE *fp = fopen("/var/log/wtmp", "rb");
+    if (!fp) 
+    {
+        fprintf(stderr, "Could not open /var/log/wtmp: %s\n", strerror(errno));
+        write_to_JSON("\n\t\"Last_Reboots_Shutdowns\":\"Failed to open wtmp log\",\n");
+        return;
+    }
+
+    struct utmp entry;
+    struct utmp last_reboots[MAX_EVENTS];
+    int count = 0;
+
+    fseek(fp, 0, SEEK_END);
+    long file_size = ftell(fp);
+    long pos = file_size - sizeof(struct utmp);
+
+    while (pos >= 0 && count < MAX_EVENTS) 
+    {
+        fseek(fp, pos, SEEK_SET);
+        fread(&entry, sizeof(struct utmp), 1, fp);
+
+        if (entry.ut_type == BOOT_TIME) 
+        {
+            last_reboots[count++] = entry;
+        }
+
+        pos -= sizeof(struct utmp);
+    }
+
+    fclose(fp);
+
+    write_to_JSON("\n\t\"Reboots_Shutdowns\":[");
+
+    for (int i = count - 1; i >= 0; i--) {
+        char *type = (last_reboots[i].ut_type == BOOT_TIME) ? "Reboot" : "Shutdown";
+        time_t t = last_reboots[i].ut_time;
+        char time_buf[64];
+        strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", localtime(&t));
+
+        write_to_JSON(
+                      "\n\t\t\t\t{"
+                      "\n\t\t\t\t\"Type\":\"%s\","
+                      "\n\t\t\t\t\"Time\":\"%s\""
+                      "\n\t\t\t\t}%s\n", type, time_buf, (i > 0 ? "," : "")
+                      );
+    }
+    write_to_JSON("\t\t\t],\n");
+}
+
+void log_failed_logins() 
+{
+    const char *paths[] = {"/var/log/btmp", "/var/log/btmp.1"};
+    struct utmp entry;
+    struct utmp last_fails[MAX_EVENTS];
+    int count = 0;
+    
+    for (int p = 0; p < 2 && count < MAX_EVENTS; ++p)
+    {
+        FILE *fp = fopen(paths[p], "rb");
+        if (!fp)
+        {
+            fprintf(stderr, "Could not open %s: %s\n", paths[p], strerror(errno));
+            continue;
+        }
+
+        while (fread(&entry, sizeof(struct utmp), 1, fp) == 1)
+        {
+            if ( entry.ut_type == LOGIN_PROCESS && (strlen(entry.ut_host) > 0) && strcmp(entry.ut_host, ":0") != 0)
+            {
+                if (count < MAX_EVENTS)
+                    last_fails[count++] = entry;
+                else
+                    break;
+            }
+        }
+
+        fclose(fp);
+    }
+    write_to_JSON("\n\t\"Failed_Login_Attempts\":[\n");
+
+    for (int i = 0; i < count; i++) 
+    {
+        time_t t = last_fails[i].ut_time;
+        char time_buf[64];
+        strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", localtime(&t));
+
+        write_to_JSON(
+                      "\n\t\t\t\t{"
+                      "\n\t\t\t\t\"User\":\"%s\","
+                      "\n\t\t\t\t\"Line\":\"%s\","
+                      "\n\t\t\t\t\"Host\":\"%s\","
+                      "\n\t\t\t\t\"Time\":\"%s\""
+                      "\n\t\t\t\t}%s", last_fails[i].ut_user, last_fails[i].ut_line, last_fails[i].ut_host, time_buf, (i < count - 1 ? "," : "")
+                      );
+    }
+
+    write_to_JSON("\n\t\t\t]\n");
 }
 
 void mqtt_publish_initialisation()

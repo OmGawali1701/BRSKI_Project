@@ -7,7 +7,7 @@ After=network.target
 Type=simple
 
 # Path to your statically linked binary
-ExecStart=/usr/local/bin/Static_Behavioural_Attributes
+ExecStart=/usr/local/bin/Behavioural_Attributes_Buff_Static
 
 # Restart the service on failure (e.g., crash)
 Restart=on-failure

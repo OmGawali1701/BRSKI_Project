@@ -7,6 +7,9 @@
 #include <unistd.h>
 #include <utmp.h>
 #include <fcntl.h>
+#include <dirent.h>
+#include <ctype.h>
+#include <errno.h>
 
 #include <sys/types.h>
 #include <sys/statvfs.h>
@@ -24,9 +27,17 @@
 
 
 #define BUF_SIZE 1024
-#define JSON_BUF_SIZE 2048
+#define JSON_BUF_SIZE 4096
 
 #define MAX_EVENTS 5
+
+#define MAX_TOP_PROCS 5
+
+typedef struct {
+    pid_t pid;
+    char comm[256];
+    double cpu_usage;
+} ProcInfo;
 
 #define TOPIC     "device/data"
 #define BROKER    "10.182.3.33"
@@ -58,9 +69,15 @@ void log_network_traffic();
 int get_ip_address(const char *, char *, size_t) ;
 int get_mac_address(const char *, char *, size_t);
 void log_memory_usage();
-void log_disk_usage();
+void log_disk_usage(); 
+void log_top_cpu_processes();
+void log_current_users();
 void log_failed_logins();
-void log_reboots_shutdowns(); 
+void log_reboots_shutdowns();
+int compare_cpu_usage(const void *, const void *);
+int filter_numeric_dirs(const struct dirent *);
+double read_cpu_time(pid_t );
+
 
 void mqtt_publish_initialisation();
 void mqtt_publish();
@@ -108,6 +125,8 @@ void build_json_payload()
         log_network_traffic();
         log_memory_usage();
         log_disk_usage();
+        log_top_cpu_processes();
+        log_current_users();
         log_reboots_shutdowns();
         log_failed_logins();
         
@@ -446,7 +465,7 @@ void log_network_traffic()
         JSON_Index -= 2;
     }
 
-    write_to_JSON("\n\t},\n");
+    write_to_JSON("\n\t\t\t},\n");
 }
 
 int get_ip_address(const char *iface, char *ip_buffer, size_t buflen) 
@@ -505,6 +524,126 @@ void log_memory_usage()
                   "\n\t\t\t},\n", info.totalram / (1024 * 1024),info.freeram / (1024 * 1024), (info.totalram - info.freeram) / (1024 * 1024), mi.uordblks / 1024);
 }
 
+
+void log_top_cpu_processes() 
+{
+    struct dirent **namelist;
+    int n = scandir("/proc", &namelist, filter_numeric_dirs, NULL);
+    if (n < 0) 
+    {
+        fprintf(stderr, "scandir failed: %s\n", strerror(errno));
+        return;
+    }
+
+    ProcInfo *procs = calloc(n, sizeof(ProcInfo));
+    if (!procs) 
+    {
+        fprintf(stderr, "Memory allocation failed\n");
+        for (int i = 0; i < n; i++) free(namelist[i]);
+        free(namelist);
+        return;
+    }
+
+    int count = 0;
+    for (int i = 0; i < n && count < n; i++) 
+    {
+        pid_t pid = atoi(namelist[i]->d_name);
+        double cpu = read_cpu_time(pid);
+        if (cpu < 0) 
+        {
+            free(namelist[i]);
+            continue;
+        }
+
+        procs[count].pid = pid;
+        procs[count].cpu_usage = cpu;
+
+        char path[256];
+        snprintf(path, sizeof(path), "/proc/%d/comm", pid);
+        FILE *fp = fopen(path, "r");
+        if (fp) 
+        {
+            fgets(procs[count].comm, sizeof(procs[count].comm), fp);
+            strtok(procs[count].comm, "\n");
+            fclose(fp);
+        } else 
+        {
+            strncpy(procs[count].comm, "unknown", sizeof(procs[count].comm));
+        }
+
+        count++;
+        free(namelist[i]);
+    }
+    free(namelist);
+
+    qsort(procs, count, sizeof(ProcInfo), compare_cpu_usage);
+
+    if (count > MAX_TOP_PROCS)
+        count = MAX_TOP_PROCS;
+
+    write_to_JSON("\n\t\"Top_CPU_Processes\": [\n");
+    for (int i = 0; i < count; i++) 
+    {
+        write_to_JSON(
+            "\t\t\t{"
+            "\n\t\t\t\t\"PID\": \"%d\","
+            "\n\t\t\t\t\"Command\": \"%s\","
+            "\n\t\t\t\t\"CPU_Usage_(sec)\": \"%.2f\""
+            "\n\t\t\t}%s\n",
+            procs[i].pid, procs[i].comm, procs[i].cpu_usage,
+            (i < count - 1) ? "," : "");
+    }
+    write_to_JSON("\t\t\t]\n");
+
+    free(procs);
+}
+
+int filter_numeric_dirs(const struct dirent *entry) 
+{
+    if (entry->d_type != DT_DIR)
+        return 0;
+
+    const char *name = entry->d_name;
+    while (*name) 
+    {
+        if (!isdigit(*name)) return 0;
+        name++;
+    }
+    return 1;
+}
+
+double read_cpu_time(pid_t pid) 
+{
+    char path[256], comm[256], state;
+    unsigned long utime, stime;
+    double total_time = 0;
+    long clk_tck = sysconf(_SC_CLK_TCK);
+
+
+    FILE *fp;
+
+    snprintf(path, sizeof(path), "/proc/%d/stat", pid);
+    fp = fopen(path, "r");
+    if (!fp) return -1;
+
+    fscanf(fp, "%*d (%255[^)]) %c", comm, &state);  // skip pid and comm
+    for (int i = 0; i < 11; i++) fscanf(fp, "%*s"); // skip to utime
+    fscanf(fp, "%lu %lu", &utime, &stime);
+    fclose(fp);
+    total_time = (utime + stime) / (double)clk_tck;
+    return total_time;
+}
+
+// qsort comparator: descending by cpu_usage
+int compare_cpu_usage(const void *a, const void *b) 
+{
+    ProcInfo *p1 = (ProcInfo *)a;
+    ProcInfo *p2 = (ProcInfo *)b;
+    if (p2->cpu_usage > p1->cpu_usage) return 1;
+    if (p2->cpu_usage < p1->cpu_usage) return -1;
+    return 0;
+}
+
 void log_disk_usage() 
 {
     struct statvfs fs;
@@ -519,7 +658,7 @@ void log_disk_usage()
                       "\n\t\t\t\"Disk_Total_(MB)\":\"%lu\","
                       "\n\t\t\t\"Disk_used_(MB)\":\"%lu\","
                       "\n\t\t\t\"Disk_free_(MB)\":\"%lu\""
-                      "\n\t\t\t}\n", total,used,free);
+                      "\n\t\t\t},\n", total,used,free);
     }
     else 
     {
@@ -527,6 +666,45 @@ void log_disk_usage()
         exit(EXIT_FAILURE);
     }
 }
+
+void log_current_users()
+{
+    struct utmp entry;
+    FILE *fp = fopen("/var/run/utmp", "rb");  // or "/run/utmp" on some systems
+    if (!fp)
+    {
+        fprintf(stderr, "Could not open /var/run/utmp: %s\n", strerror(errno));
+        write_to_JSON("\n\t\"Current_Users\":[]\n");
+        return;
+    }
+
+    write_to_JSON("\n\t\"Current_Users\":[\n");
+
+    int first = 1;
+    while (fread(&entry, sizeof(struct utmp), 1, fp) == 1)
+    {
+        if (entry.ut_type == USER_PROCESS)
+        {
+            time_t t = entry.ut_time;
+            char time_buf[64];
+            strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", localtime(&t));
+
+            write_to_JSON(
+                          "%s\t\t\t{"
+                          "\n\t\t\t\t\"User\":\"%s\","
+                          "\n\t\t\t\t\"Line\":\"%s\","
+                          "\n\t\t\t\t\"Host\":\"%s\","
+                          "\n\t\t\t\t\"Login_Time\":\"%s\""
+                          "\n\t\t\t}",(first ? "" : ",\n"),entry.ut_user, entry.ut_line, entry.ut_host, time_buf
+                        );
+           first = 0;
+        }
+    }
+
+    write_to_JSON("\n\t\t\t]\n");
+    fclose(fp);
+}
+
 
 void log_reboots_shutdowns() 
 {

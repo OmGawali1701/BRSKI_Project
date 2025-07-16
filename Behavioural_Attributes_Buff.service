@@ -11,6 +11,8 @@ Restart=on-failure
 
 DynamicUser=yes
 
+ReadOnlyPaths=/etc/ssl/behavioural_agent
+
 StandardOutput=append:/var/log/Behavioural_Attributes.log
 StandardError=append:/var/log/Behavioural_Attributes.log
 

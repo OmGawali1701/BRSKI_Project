@@ -42,9 +42,9 @@ typedef struct {
 #define TOPIC     "device/data"
 #define BROKER    "10.182.3.33"
 
-#define CA_CERT_PATH "/home/om/cert/ca.crt"
-#define CLIENT_CERT_PATH "/home/om/cert/client.crt"
-#define CLIENT_PVT_KEY_PATH "/home/om/key/client.key"
+#define CA_CERT_PATH "/etc/ssl/behavioural_agent/ca.crt"
+#define CLIENT_CERT_PATH "/etc/ssl/behavioural_agent/client.crt"
+#define CLIENT_PVT_KEY_PATH "/etc/ssl/behavioural_agent/client.key"
 
 #define MAC_PATH_TEMPLATE "/sys/class/net/%s/address"
 #define MAC_ADDR_LEN 32
@@ -323,41 +323,6 @@ void log_uptime()
     
 }
 
-void log_cpu_usage() 
-{
-    FILE *fp = fopen("/proc/stat", "r");
-    if (!fp) 
-    {
-      fprintf(stderr,"Could not open /proc/stat: %s\n",strerror(errno));
-      fprintf(stdout,"Skipping CPU Usage read\n");
-    }
-    else
-    {
-    char * buffer = (char *)calloc(BUF_SIZE,sizeof(char));
-    if (!buffer)
-    {
-        fprintf(stderr,"Memory allocation failed: %s\n",strerror(errno));  
-        fclose(fp);
-    }
-    else
-    {
-    fgets(buffer, BUF_SIZE, fp);
-    unsigned long long int user, nice, system, idle;
-    sscanf(buffer, "cpu %llu %llu %llu %llu", &user, &nice, &system, &idle);
-    fclose(fp);
-    
-    write_to_JSON(
-                  "\n\t\"CPU_Usage\":{"
-                  "\n\t\t\t\"CPU_User_Time\":\"%llu\","
-                  "\n\t\t\t\"CPU_System_Time\":\"%llu\","
-                  "\n\t\t\t\"CPU_Idle_Time\":\"%llu\""
-                  "\n\t\t\t},\n", user, system, idle);
-
-    free(buffer);
-    }
-    }
-}
-
 void log_cpu_temp() 
 { 
     char path[64], type[64];
@@ -398,7 +363,7 @@ void log_cpu_temp()
                 if(zone == 0)
                     write_to_JSON("\n\t\"CPU_Core_Temperature\":{");
                     
-                write_to_JSON("\n\t\t\t\"CPU_Core%d_Temperature_(°C)\":\"%.2f\",", zone, temp / 1000.0);
+                write_to_JSON("\n\t\t\t\"CPU_Core%d_Temperature_(C)\":\"%.2f\",", zone, temp / 1000.0);
                 fclose(fp);
             } 
             else 
@@ -409,6 +374,43 @@ void log_cpu_temp()
         }
         zone++;
     }   
+}
+
+
+
+void log_cpu_usage() 
+{
+    FILE *fp = fopen("/proc/stat", "r");
+    if (!fp) 
+    {
+      fprintf(stderr,"Could not open /proc/stat: %s\n",strerror(errno));
+      fprintf(stdout,"Skipping CPU Usage read\n");
+    }
+    else
+    {
+    char * buffer = (char *)calloc(BUF_SIZE,sizeof(char));
+    if (!buffer)
+    {
+        fprintf(stderr,"Memory allocation failed: %s\n",strerror(errno));  
+        fclose(fp);
+    }
+    else
+    {
+    fgets(buffer, BUF_SIZE, fp);
+    unsigned long long int user, nice, system, idle;
+    sscanf(buffer, "cpu %llu %llu %llu %llu", &user, &nice, &system, &idle);
+    fclose(fp);
+    
+    write_to_JSON(
+                  "\n\t\"CPU_Usage\":{"
+                  "\n\t\t\t\"CPU_User_Time\":\"%llu\","
+                  "\n\t\t\t\"CPU_System_Time\":\"%llu\","
+                  "\n\t\t\t\"CPU_Idle_Time\":\"%llu\""
+                  "\n\t\t\t},\n", user, system, idle);
+
+    free(buffer);
+    }
+    }
 }
 
 void log_network_traffic() 
@@ -593,7 +595,7 @@ void log_top_cpu_processes()
             procs[i].pid, procs[i].comm, procs[i].cpu_usage,
             (i < count - 1) ? "," : "");
     }
-    write_to_JSON("\t\t\t]\n");
+    write_to_JSON("\t\t\t],\n");
 
     free(procs);
 }
@@ -634,7 +636,6 @@ double read_cpu_time(pid_t pid)
     return total_time;
 }
 
-// qsort comparator: descending by cpu_usage
 int compare_cpu_usage(const void *a, const void *b) 
 {
     ProcInfo *p1 = (ProcInfo *)a;
@@ -701,7 +702,7 @@ void log_current_users()
         }
     }
 
-    write_to_JSON("\n\t\t\t]\n");
+    write_to_JSON("\n\t\t\t],\n");
     fclose(fp);
 }
 
@@ -790,7 +791,12 @@ void log_failed_logins()
 
     for (int i = 0; i < count; i++) 
     {
-        time_t t = last_fails[i].ut_time;
+    time_t t = 0;
+    #if defined(__linux__)
+        t = last_fails[i].ut_tv.tv_sec;
+    #else
+        t = last_fails[i].ut_time;
+    #endif
         char time_buf[64];
         strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", localtime(&t));
 

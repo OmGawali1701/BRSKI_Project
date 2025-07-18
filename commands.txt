@@ -1,3 +1,8 @@
+mosquitto_sub -h 10.182.3.33 -p 8883 --cafile D:\Shared_Folder\windows_required_cert_files\ca.crt --cert D:\Shared_Folder\windows_required_cert_files\client.crt --key D:\Shared_Folder\windows_required_cert_files\client.key --tls-version tlsv1.2 -t "device/data" 
+
+mosquitto_pub -h 10.182.3.33 -p 8883 --cafile /home/om/cert/ca.crt -t device/data -m "Linux publishing to Windows broker"
+
+
 1. Starting your service
 
 sudo systemctl daemon-reload            
@@ -16,7 +21,6 @@ sudo systemctl status Behavioural_Attributes.service
 
 3. Reloading your service (after config changes)
 
-
 sudo systemctl daemon-reload              
 sudo systemctl restart Behavioural_Attributes.service 
 sudo systemctl status Behavioural_Attributes.service  
@@ -24,7 +28,6 @@ sudo systemctl status Behavioural_Attributes.service
 
 locations:
 
-.service file = /etc/systemd/system/Behavioural_Attributes.service
-.bin file = /usr/local/bin/Static_Behavioural_Attributes 
+.service file = /etc/systemd/system/Behavioural_Attributes_Buff.service
+.bin file = /usr/local/bin/Behavioural_Attributes_Buff_Static 
 log file = /var/log/Behavioural_Attributes.log
-

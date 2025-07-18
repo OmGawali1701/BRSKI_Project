@@ -86,11 +86,16 @@ const char *get_signal_reason(int);
 void clean_up_resources();
 void signal_handler(int);
 
+void log_with_timestamp(FILE *, const char *, ...);
+
 void write_to_JSON(const char * format, ...);
 
 int main() 
 {
-  fprintf(stdout, "Daemon running. PID: %d\n", getpid());
+  setvbuf(stdout, NULL, _IONBF, 0);  
+  setvbuf(stderr, NULL, _IONBF, 0);
+  
+  log_with_timestamp(stdout, "Daemon running. PID: %d\n", getpid());
 
   atexit(clean_up_resources);
   
@@ -150,8 +155,8 @@ void device_id()
     FILE *fp = fopen("/etc/machine-id", "r");
     if(!fp)
     {
-      fprintf(stderr,"Could not open /etc/machine-id: %s\n",strerror(errno));
-      fprintf(stdout,"Skipping Device ID Creation\n");
+      log_with_timestamp(stderr,"Could not open /etc/machine-id: %s\n",strerror(errno));
+      log_with_timestamp(stdout,"Skipping Device ID Creation\n");
     }
     else
     {
@@ -175,8 +180,8 @@ void device_static_data()
     FILE *fp = fopen("/etc/os-release", "r");
     if (!fp) 
     {
-        fprintf(stderr, "Could not open /etc/os-release: %s\n", strerror(errno));
-        fprintf(stdout, "Skipping OS Name Collection\n");
+        log_with_timestamp(stderr, "Could not open /etc/os-release: %s\n", strerror(errno));
+        log_with_timestamp(stdout, "Skipping OS Name Collection\n");
     } 
     else 
     {
@@ -203,8 +208,8 @@ void device_static_data()
     fp = fopen("/etc/hostname", "r");
     if(!fp)
     {
-        fprintf(stderr, "Could not open /etc/hostname: %s\n", strerror(errno));
-        fprintf(stdout, "Skipping Hostname Collection\n");
+        log_with_timestamp(stderr, "Could not open /etc/hostname: %s\n", strerror(errno));
+        log_with_timestamp(stdout, "Skipping Hostname Collection\n");
     }
     else 
     {
@@ -217,8 +222,8 @@ void device_static_data()
     
     if(!fp)
     {
-        fprintf(stderr, "Could not open /proc/version: %s\n", strerror(errno));
-        fprintf(stdout, "Skipping Kernel Information Collection\n");
+        log_with_timestamp(stderr, "Could not open /proc/version: %s\n", strerror(errno));
+        log_with_timestamp(stdout, "Skipping Kernel Information Collection\n");
     }
     else 
     {        
@@ -238,8 +243,8 @@ void device_static_data()
     
     if(!fp)
     {
-        fprintf(stderr, "Could not open /var/lib/dpkg/status: %s\n", strerror(errno));
-        fprintf(stdout, "Skipping Packages Information Collection\n");
+        log_with_timestamp(stderr, "Could not open /var/lib/dpkg/status: %s\n", strerror(errno));
+        log_with_timestamp(stdout, "Skipping Packages Information Collection\n");
     }    
     else 
     {
@@ -254,8 +259,8 @@ void device_static_data()
     fp = fopen("/proc/cpuinfo", "r");
     if(!fp)
     {
-        fprintf(stderr, "Could not open /proc/cpuinfo: %s\n", strerror(errno));
-        fprintf(stdout, "Skipping CPU Information Collection\n");
+        log_with_timestamp(stderr, "Could not open /proc/cpuinfo: %s\n", strerror(errno));
+        log_with_timestamp(stdout, "Skipping CPU Information Collection\n");
     }    
     
     else 
@@ -280,8 +285,8 @@ void device_static_data()
     fp = fopen("/proc/stat", "r");
     if(!fp)
     {
-        fprintf(stderr, "Could not open /proc/stat: %s\n", strerror(errno));
-        fprintf(stdout, "Skipping CPU Core Count Collection\n");
+        log_with_timestamp(stderr, "Could not open /proc/stat: %s\n", strerror(errno));
+        log_with_timestamp(stdout, "Skipping CPU Core Count Collection\n");
     }
     else
     {
@@ -308,8 +313,8 @@ void log_uptime()
     FILE *fp = fopen("/proc/uptime", "r");
     if (!fp) 
     {
-      fprintf(stderr,"Could not open /proc/uptime: %s\n",strerror(errno));
-      fprintf(stdout,"Skipping Uptime read\n");
+      log_with_timestamp(stderr,"Could not open /proc/uptime: %s\n",strerror(errno));
+      log_with_timestamp(stdout,"Skipping Uptime read\n");
     }
     else
     {
@@ -336,7 +341,7 @@ void log_cpu_temp()
         {
           if(zone == 0)
           {
-            fprintf(stderr, "Temperature sensor not found. Skipping Temp read : %s\n",strerror(errno));   
+            log_with_timestamp(stderr, "Temperature sensor not found. Skipping Temp read : %s\n",strerror(errno));   
             break;
           }
           else
@@ -383,15 +388,15 @@ void log_cpu_usage()
     FILE *fp = fopen("/proc/stat", "r");
     if (!fp) 
     {
-      fprintf(stderr,"Could not open /proc/stat: %s\n",strerror(errno));
-      fprintf(stdout,"Skipping CPU Usage read\n");
+      log_with_timestamp(stderr,"Could not open /proc/stat: %s\n",strerror(errno));
+      log_with_timestamp(stdout,"Skipping CPU Usage read\n");
     }
     else
     {
     char * buffer = (char *)calloc(BUF_SIZE,sizeof(char));
     if (!buffer)
     {
-        fprintf(stderr,"Memory allocation failed: %s\n",strerror(errno));  
+        log_with_timestamp(stderr,"Memory allocation failed: %s\n",strerror(errno));  
         fclose(fp);
     }
     else
@@ -418,15 +423,15 @@ void log_network_traffic()
     FILE *fp = fopen("/proc/net/dev", "r");
     if (!fp) 
     {
-      fprintf(stderr, "Could not open /proc/net/dev: %s\n",strerror(errno));
-      fprintf(stdout,"Skipping Network Traffic read\n");
+      log_with_timestamp(stderr, "Could not open /proc/net/dev: %s\n",strerror(errno));
+      log_with_timestamp(stdout,"Skipping Network Traffic read\n");
     }
     else
     {
     char * buffer = (char *)calloc(512,sizeof(char));
     if (!buffer)
     {
-        fprintf(stderr, "Memory Allocation Failed: %s\n",strerror(errno));
+        log_with_timestamp(stderr, "Memory Allocation Failed: %s\n",strerror(errno));
     }
     else
     {
@@ -533,14 +538,15 @@ void log_top_cpu_processes()
     int n = scandir("/proc", &namelist, filter_numeric_dirs, NULL);
     if (n < 0) 
     {
-        fprintf(stderr, "scandir failed: %s\n", strerror(errno));
+        log_with_timestamp(stderr, "scandir failed: %s\n", strerror(errno));
+        log_with_timestamp(stdout, "Skipping the TOP CPU processes collection.\n");
         return;
     }
 
     ProcInfo *procs = calloc(n, sizeof(ProcInfo));
     if (!procs) 
     {
-        fprintf(stderr, "Memory allocation failed\n");
+        log_with_timestamp(stderr, "Memory allocation failed\n");
         for (int i = 0; i < n; i++) free(namelist[i]);
         free(namelist);
         return;
@@ -628,8 +634,8 @@ double read_cpu_time(pid_t pid)
     fp = fopen(path, "r");
     if (!fp) return -1;
 
-    fscanf(fp, "%*d (%255[^)]) %c", comm, &state);  // skip pid and comm
-    for (int i = 0; i < 11; i++) fscanf(fp, "%*s"); // skip to utime
+    fscanf(fp, "%*d (%255[^)]) %c", comm, &state);  
+    for (int i = 0; i < 11; i++) fscanf(fp, "%*s"); 
     fscanf(fp, "%lu %lu", &utime, &stime);
     fclose(fp);
     total_time = (utime + stime) / (double)clk_tck;
@@ -663,7 +669,7 @@ void log_disk_usage()
     }
     else 
     {
-        fprintf(stderr, "statvfs failed: %s\n", strerror(errno));    
+        log_with_timestamp(stderr, "statvfs failed: %s\n", strerror(errno));    
         exit(EXIT_FAILURE);
     }
 }
@@ -674,7 +680,8 @@ void log_current_users()
     FILE *fp = fopen("/var/run/utmp", "rb");  // or "/run/utmp" on some systems
     if (!fp)
     {
-        fprintf(stderr, "Could not open /var/run/utmp: %s\n", strerror(errno));
+        log_with_timestamp(stderr, "Could not open /var/run/utmp: %s\n", strerror(errno));
+        log_with_timestamp(stdout, "Skipping the Current logged user collection.\n");
         write_to_JSON("\n\t\"Current_Users\":[]\n");
         return;
     }
@@ -712,7 +719,8 @@ void log_reboots_shutdowns()
     FILE *fp = fopen("/var/log/wtmp", "rb");
     if (!fp) 
     {
-        fprintf(stderr, "Could not open /var/log/wtmp: %s\n", strerror(errno));
+        log_with_timestamp(stderr, "Could not open /var/log/wtmp: %s\n", strerror(errno));
+        log_with_timestamp(stdout, "Skipping the Reboot History collection.\n");
         write_to_JSON("\n\t\"Last_Reboots_Shutdowns\":\"Failed to open wtmp log\",\n");
         return;
     }
@@ -770,7 +778,7 @@ void log_failed_logins()
         FILE *fp = fopen(paths[p], "rb");
         if (!fp)
         {
-            fprintf(stderr, "Could not open %s: %s\n", paths[p], strerror(errno));
+            log_with_timestamp(stderr, "Could not open %s: %s\n", paths[p], strerror(errno));
             continue;
         }
 
@@ -823,28 +831,28 @@ void mqtt_publish_initialisation()
                                            //  NULL = user-defined object 
     if (!mosq) 
     {
-        fprintf(stderr, "Failed To Create Mosquitto Instance: %s\n", strerror(errno));
+        log_with_timestamp(stderr, "Failed To Create Mosquitto Instance: %s\n", strerror(errno));
         exit(EXIT_FAILURE);
     }
-        fprintf(stdout, "Created Mosquitto Instance\n");
+        log_with_timestamp(stdout, "Created Mosquitto Instance\n");
     
     int lwt_rc = mosquitto_will_set(mosq, TOPIC, strlen(will_payload),
                                     will_payload, 1, false);
     if (lwt_rc != MOSQ_ERR_SUCCESS) 
     {
-        fprintf(stderr, "Failed to set Last Will: %s\n", mosquitto_strerror(lwt_rc));
+        log_with_timestamp(stderr, "Failed to set Last Will: %s\n", mosquitto_strerror(lwt_rc));
         exit(EXIT_FAILURE);
     }
-    fprintf(stdout, "LWT Set Successfully\n");
+    log_with_timestamp(stdout, "LWT Set Successfully\n");
     
      int tls_rc = mosquitto_tls_set(mosq,CA_CERT_PATH, NULL,CLIENT_CERT_PATH,CLIENT_PVT_KEY_PATH,NULL);
 
     if (tls_rc != MOSQ_ERR_SUCCESS) 
     {
-        fprintf(stderr, "Failed to set TLS options: %s\n", mosquitto_strerror(tls_rc));
+        log_with_timestamp(stderr, "Failed to set TLS options: %s\n", mosquitto_strerror(tls_rc));
         exit(EXIT_FAILURE);
     }
-        fprintf(stdout, "Mosquitto TLS Setup Done\n");
+        log_with_timestamp(stdout, "Mosquitto TLS Setup Done\n");
     mosquitto_tls_insecure_set(mosq, false);
     
     int attempts = 0;
@@ -855,7 +863,7 @@ void mqtt_publish_initialisation()
     if(rc == MOSQ_ERR_SUCCESS)
     {
         Broker_Connection_Flag = 1;
-        fprintf(stdout, "Connected To MQTT Broker\n");
+        log_with_timestamp(stdout, "Connected To MQTT Broker\n");
         
         mosquitto_publish(mosq, NULL, TOPIC, strlen(online_payload),
                   online_payload, 1, false);
@@ -863,13 +871,13 @@ void mqtt_publish_initialisation()
 
         break;
     }
-        fprintf(stderr, "Unable To Connect To MQTT Broker: %s\nRetrying.....\n attempt no. %d\n", mosquitto_strerror(rc),attempts);
+        log_with_timestamp(stderr, "Unable To Connect To MQTT Broker: %s\nRetrying.....\n attempt no. %d\n", mosquitto_strerror(rc),attempts);
 
         sleep(1 << attempts);  
     }  
     if (attempts == 5)
     {
-        fprintf(stderr, "Failed to Connect To MQTT Broker after %d attempts: %s\n",attempts,strerror(errno));
+        log_with_timestamp(stderr, "Failed to Connect To MQTT Broker after %d attempts: %s\n",attempts,strerror(errno));
         Broker_Connection_Flag = 0;
         exit(EXIT_FAILURE);    
      }
@@ -882,11 +890,11 @@ void mqtt_publish()
 
     if (rc != MOSQ_ERR_SUCCESS) 
     {
-      fprintf(stderr, "Failed to publish: %s\n", mosquitto_strerror(rc));
+      log_with_timestamp(stderr, "Failed to publish: %s\n", mosquitto_strerror(rc));
     }
     else
     {
-    fprintf(stderr, "Data Published\n");
+    log_with_timestamp(stdout, "Data Published\n");
     }
     JSON_Index = 0;
     /*
@@ -905,13 +913,13 @@ void check_disk_space_or_exit()
         if (free_mb < 1) 
         {
             Memory_Flag = 1;
-            fprintf(stderr, "Disk almost full! Exiting: %s\n", strerror(errno));
+            log_with_timestamp(stderr, "Disk almost full! Exiting: %s\n", strerror(errno));
             exit(EXIT_FAILURE);
         }
     } 
     else 
     {
-        fprintf(stderr, "statvfs failed: %s\n", strerror(errno));    
+        log_with_timestamp(stderr, "statvfs failed: %s\n", strerror(errno));    
         exit(EXIT_FAILURE);
     }
 }
@@ -952,11 +960,11 @@ void clean_up_resources()
 
     if (Exit_Signal_Flag) 
     {
-        fprintf(stderr, "\nExit signal received: %s\n", get_signal_reason(Exit_Signal_Flag));
+        log_with_timestamp(stderr, "\nExit signal received: %s\n", get_signal_reason(Exit_Signal_Flag));
     } 
     else 
     {
-        fprintf(stderr, "\nNormal program exit \n");
+        log_with_timestamp(stderr, "\nNormal program exit \n");
     }
     
     if(Broker_Connection_Flag == 1)
@@ -967,19 +975,35 @@ void clean_up_resources()
     mosquitto_disconnect(mosq);
     mosquitto_disconnect(mosq);
     
-    fprintf(stdout, "MQTT Broker Disconnected\n");
+    log_with_timestamp(stdout, "MQTT Broker Disconnected\n");
     
     }
     
     mosquitto_destroy(mosq);
-    fprintf(stdout, "Mosquitto Instance Destroyed\n");    
+    log_with_timestamp(stdout, "Mosquitto Instance Destroyed\n");    
     
     mosquitto_lib_cleanup();
-    fprintf(stdout, "Mosquitto Lib Cleared\n");
+    log_with_timestamp(stdout, "Mosquitto Lib Cleared\n");
     }
     
-    fprintf(stdout, "Program Exited Successfully\n");
+    log_with_timestamp(stdout, "Program Exited Successfully\n");
 }
+
+void log_with_timestamp(FILE *stream, const char *format, ...)
+{
+    char time_buf[64];
+    time_t now = time(NULL);
+    struct tm *tm_info = localtime(&now);
+    strftime(time_buf, sizeof(time_buf), "[%Y-%m-%d %H:%M:%S]", tm_info);
+
+    fprintf(stream, "%s ", time_buf);  // Prefix timestamp
+
+    va_list args;
+    va_start(args, format);
+    vfprintf(stream, format, args);    // Original message
+    va_end(args);
+}
+
 
 void write_to_JSON(const char * format, ...)
 {

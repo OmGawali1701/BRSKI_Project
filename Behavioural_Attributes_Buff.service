@@ -1,15 +1,15 @@
 [Unit]
-Description=Runnig process as Demon which collects Behavioural Data  
+Description=Runnig process as daemon which collects Behavioural Data and sends to server.  
 After=network.target
 
 [Service]
 Type=simple
 
-ExecStart=/usr/local/bin/Behavioural_Attributes_Buff
+User=root
+
+ExecStart=/usr/local/bin/Behavioural_Attributes_Buff_Static
 
 Restart=on-failure
-
-DynamicUser=yes
 
 ReadOnlyPaths=/etc/ssl/behavioural_agent
 

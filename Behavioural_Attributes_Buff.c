@@ -9,7 +9,6 @@
 #include <fcntl.h>
 #include <dirent.h>
 #include <ctype.h>
-#include <errno.h>
 
 #include <sys/types.h>
 #include <sys/statvfs.h>
@@ -56,24 +55,40 @@ volatile sig_atomic_t Keep_Running_Flag = 1;
 volatile sig_atomic_t Memory_Flag = 0;
 volatile sig_atomic_t Exit_Signal_Flag = 0;
 volatile sig_atomic_t Clean_Up_Flag = 0;
-volatile sig_atomic_t Broker_Connection_Flag =0;
+volatile sig_atomic_t Broker_Connection_Flag = 0;
 
-void time_stamp();
+char **cached_package_list = NULL;
+int cached_package_count = 0;
+int first_package_check_done = 0;
+
+int first_reboot_report_done = 0;
+time_t last_known_boot_time = 0;
+
+char **cached_users = NULL;
+int cached_user_count = 0;
+int first_user_check = 1;
+
+off_t last_btmp_size = 0;
+int first_failed_login = 1;
+
 void build_json_payload();
+void time_stamp();
 void device_id();
 void device_static_data();
 void log_uptime();
 void log_cpu_usage();
 void log_cpu_temp();
 void log_network_traffic();
-int get_ip_address(const char *, char *, size_t) ;
+int get_ip_address(const char *, char *, size_t);
 int get_mac_address(const char *, char *, size_t);
 void log_memory_usage();
 void log_disk_usage(); 
 void log_top_cpu_processes();
-void log_current_users();
-void log_failed_logins();
-void log_reboots_shutdowns();
+void log_package_changes();
+int get_installed_packages(char ***);
+void log_reboot_if_changed();
+void log_user_changes();
+void log_failed_login_updates();
 int compare_cpu_usage(const void *, const void *);
 int filter_numeric_dirs(const struct dirent *);
 double read_cpu_time(pid_t );
@@ -119,26 +134,29 @@ int main()
 
 void build_json_payload()
 {
-        write_to_JSON("{\n");
-        
-        time_stamp();
-        device_id();
-        device_static_data();
-        log_uptime();
-        log_cpu_temp();
-        log_cpu_usage();
-        log_network_traffic();
-        log_memory_usage();
-        log_disk_usage();
-        log_top_cpu_processes();
-        log_current_users();
-        log_reboots_shutdowns();
-        log_failed_logins();
-        
-        write_to_JSON("}\n");
-        
-        JSON[JSON_Index] = '\0';
+    write_to_JSON("{\n");
+
+    time_stamp();                   // Add timestamp
+    device_id();                    // Unique ID
+    device_static_data();          // OS, CPU, etc.
+
+    log_uptime();                  // Uptime info
+    log_cpu_temp();                // CPU temperature
+    log_cpu_usage();               // CPU usage
+    log_network_traffic();        // RX/TX, IP/MAC
+    log_memory_usage();           // RAM usage
+    log_disk_usage();             // Disk usage
+    log_top_cpu_processes();      // Top CPU processes
+
+    log_package_changes();        // Only diffs after first
+    log_reboot_if_changed();      // Once, or if changed
+    log_user_changes();           // Only if user logged in/out
+    log_failed_login_updates();   // Only new failed logins
+
+    write_to_JSON("}\n");
+    JSON[JSON_Index] = '\0';       // Null-terminate JSON buffer
 }
+
 
 void time_stamp()
 {
@@ -519,7 +537,7 @@ int get_mac_address(const char *iface, char *mac_buffer, size_t buflen)
 void log_memory_usage() 
 { 
     struct sysinfo info;
-    sysinfo(&info);
+    if (sysinfo(&info) != 0) return;
     struct mallinfo2 mi = mallinfo2();
     
     write_to_JSON(
@@ -606,6 +624,222 @@ void log_top_cpu_processes()
     free(procs);
 }
 
+void log_package_changes() {
+    char **new_list = NULL;
+    int new_count = get_installed_packages(&new_list);
+    if (new_count < 0) return;
+
+    if (!first_package_check_done) {
+        write_to_JSON("\n\t\"Installed_Package_Count\":\"%d\",\n", new_count);
+        cached_package_list = new_list;
+        cached_package_count = new_count;
+        first_package_check_done = 1;
+        return;
+    }
+
+    write_to_JSON("\n\t\"Package_Changes\": [\n");
+    int changes = 0;
+
+    // Check for new installs
+    for (int i = 0; i < new_count; i++) {
+        int found = 0;
+        for (int j = 0; j < cached_package_count; j++) {
+            if (strcmp(new_list[i], cached_package_list[j]) == 0) {
+                found = 1;
+                break;
+            }
+        }
+        if (!found) {
+            write_to_JSON("\t\t{\"package\": \"%s\", \"status\": \"installed\"},\n", new_list[i]);
+            changes++;
+        }
+    }
+
+    // Check for removals
+    for (int i = 0; i < cached_package_count; i++) {
+        int found = 0;
+        for (int j = 0; j < new_count; j++) {
+            if (strcmp(cached_package_list[i], new_list[j]) == 0) {
+                found = 1;
+                break;
+            }
+        }
+        if (!found) {
+            write_to_JSON("\t\t{\"package\": \"%s\", \"status\": \"removed\"},\n", cached_package_list[i]);
+            changes++;
+        }
+    }
+
+    if (changes > 0 && JSON[JSON_Index - 2] == ',') JSON_Index -= 2;
+    write_to_JSON("\n\t],\n");
+
+    // Free old list
+    for (int i = 0; i < cached_package_count; i++) free(cached_package_list[i]);
+    free(cached_package_list);
+
+    cached_package_list = new_list;
+    cached_package_count = new_count;
+}
+
+
+int get_installed_packages(char ***packages) {
+    FILE *fp = fopen("/var/lib/dpkg/status", "r");
+    if (!fp) return -1;
+
+    char line[256];
+    int count = 0;
+    int size = 256;
+    *packages = malloc(size * sizeof(char *));
+    if (!*packages) return -1;
+
+    while (fgets(line, sizeof(line), fp)) {
+        if (strncmp(line, "Package:", 8) == 0) {
+            char *pkg = strchr(line, ':') + 1;
+            while (*pkg == ' ') pkg++;
+            pkg[strcspn(pkg, "\n")] = '\0';
+
+            if (count >= size) {
+                size *= 2;
+                char **temp = realloc(*packages, size * sizeof(char *));
+                if (!temp) { 
+                  for (int i = 0; i < count; i++) {
+                      free((*packages)[i]);
+                  }
+                  free(*packages);
+                  *packages = NULL;  
+                  fclose(fp); 
+                  log_with_timestamp(stderr, "Failed to reallocate memory for packages list: %s\n", strerror(errno));
+                  return -1;
+                }
+                *packages = temp;                
+            }
+            (*packages)[count++] = strdup(pkg);
+        }
+    }
+    fclose(fp);
+    return count;
+}
+
+void log_reboot_if_changed() {
+    struct sysinfo s_info;
+    if (sysinfo(&s_info) != 0) return;
+
+    time_t current_boot = time(NULL) - s_info.uptime;
+
+    if (!first_reboot_report_done || current_boot != last_known_boot_time) {
+        write_to_JSON("\n\t\"Reboot_Event\": {\n\t\t\"Boot_Timestamp\": \"%ld\"\n\t},\n", current_boot);
+        last_known_boot_time = current_boot;
+        first_reboot_report_done = 1;
+    }
+}
+
+void log_user_changes() {
+    struct utmp entry;
+    char *current_users[64];
+    int count = 0;
+
+    FILE *fp = fopen("/var/run/utmp", "rb");
+    if (!fp) return;
+
+    while (fread(&entry, sizeof(struct utmp), 1, fp) == 1) {
+        if (entry.ut_type == USER_PROCESS) {
+            if (count < 64){
+            char safe_user[UT_NAMESIZE + 1];
+            memcpy(safe_user, entry.ut_user, UT_NAMESIZE);
+            safe_user[UT_NAMESIZE] = '\0';  // Ensure null-termination
+            current_users[count++] = strdup(safe_user);
+        }
+    }
+    }
+    fclose(fp);
+
+    write_to_JSON("\n\t\"User_Changes\": [\n");
+    int changes = 0;
+
+    if (first_user_check) {
+        for (int i = 0; i < count; i++) {
+            write_to_JSON("\t\t{\"user\": \"%s\", \"action\": \"login\"},\n", current_users[i]);
+            changes++;
+        }
+        first_user_check = 0;
+    } else {
+        for (int i = 0; i < count; i++) {
+            int found = 0;
+            for (int j = 0; j < cached_user_count; j++) {
+                if (strcmp(current_users[i], cached_users[j]) == 0) {
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found) {
+                write_to_JSON("\t\t{\"user\": \"%s\", \"action\": \"login\"},\n", current_users[i]);
+                changes++;
+            }
+        }
+
+        for (int i = 0; i < cached_user_count; i++) {
+            int found = 0;
+            for (int j = 0; j < count; j++) {
+                if (strcmp(cached_users[i], current_users[j]) == 0) {
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found) {
+                write_to_JSON("\t\t{\"user\": \"%s\", \"action\": \"logout\"},\n", cached_users[i]);
+                changes++;
+            }
+        }
+    }
+
+    if (changes && JSON[JSON_Index - 2] == ',') JSON_Index -= 2;
+    write_to_JSON("\n\t],\n");
+
+    for (int i = 0; i < cached_user_count; i++) free(cached_users[i]);
+    cached_user_count = count;
+    cached_users = malloc(count * sizeof(char *));
+    for (int i = 0; i < count; i++) cached_users[i] = strdup(current_users[i]);
+}
+
+void log_failed_login_updates() {
+    const char *path = "/var/log/btmp";
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return;
+
+    fseeko(fp, 0, SEEK_END);
+    off_t new_size = ftello(fp);
+
+    if (first_failed_login || new_size > last_btmp_size) {
+        fseeko(fp, last_btmp_size, SEEK_SET);
+        struct utmp entry;
+
+        write_to_JSON("\n\t\"Failed_Login_Attempts\": [\n");
+        int count = 0;
+
+        while (fread(&entry, sizeof(struct utmp), 1, fp) == 1) {
+            if (entry.ut_type == LOGIN_PROCESS) {
+                time_t t = entry.ut_time;
+                char time_buf[64];
+                strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", localtime(&t));
+
+                write_to_JSON(
+                    "\t\t{\"User\": \"%s\", \"Line\": \"%s\", \"Host\": \"%s\", \"Time\": \"%s\"},\n",
+                    entry.ut_user, entry.ut_line, entry.ut_host, time_buf);
+                count++;
+            }
+        }
+
+        if (count && JSON[JSON_Index - 2] == ',') JSON_Index -= 2;
+        write_to_JSON("\n\t],\n");
+
+        last_btmp_size = new_size;
+        first_failed_login = 0;
+    }
+
+    fclose(fp);
+}
+
+
 int filter_numeric_dirs(const struct dirent *entry) 
 {
     if (entry->d_type != DT_DIR)
@@ -674,153 +908,6 @@ void log_disk_usage()
     }
 }
 
-void log_current_users()
-{
-    struct utmp entry;
-    FILE *fp = fopen("/var/run/utmp", "rb");  // or "/run/utmp" on some systems
-    if (!fp)
-    {
-        log_with_timestamp(stderr, "Could not open /var/run/utmp: %s\n", strerror(errno));
-        log_with_timestamp(stdout, "Skipping the Current logged user collection.\n");
-        write_to_JSON("\n\t\"Current_Users\":[]\n");
-        return;
-    }
-
-    write_to_JSON("\n\t\"Current_Users\":[\n");
-
-    int first = 1;
-    while (fread(&entry, sizeof(struct utmp), 1, fp) == 1)
-    {
-        if (entry.ut_type == USER_PROCESS)
-        {
-            time_t t = entry.ut_time;
-            char time_buf[64];
-            strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", localtime(&t));
-
-            write_to_JSON(
-                          "%s\t\t\t{"
-                          "\n\t\t\t\t\"User\":\"%s\","
-                          "\n\t\t\t\t\"Line\":\"%s\","
-                          "\n\t\t\t\t\"Host\":\"%s\","
-                          "\n\t\t\t\t\"Login_Time\":\"%s\""
-                          "\n\t\t\t}",(first ? "" : ",\n"),entry.ut_user, entry.ut_line, entry.ut_host, time_buf
-                        );
-           first = 0;
-        }
-    }
-
-    write_to_JSON("\n\t\t\t],\n");
-    fclose(fp);
-}
-
-
-void log_reboots_shutdowns() 
-{
-    FILE *fp = fopen("/var/log/wtmp", "rb");
-    if (!fp) 
-    {
-        log_with_timestamp(stderr, "Could not open /var/log/wtmp: %s\n", strerror(errno));
-        log_with_timestamp(stdout, "Skipping the Reboot History collection.\n");
-        write_to_JSON("\n\t\"Last_Reboots_Shutdowns\":\"Failed to open wtmp log\",\n");
-        return;
-    }
-
-    struct utmp entry;
-    struct utmp last_reboots[MAX_EVENTS];
-    int count = 0;
-
-    fseek(fp, 0, SEEK_END);
-    long file_size = ftell(fp);
-    long pos = file_size - sizeof(struct utmp);
-
-    while (pos >= 0 && count < MAX_EVENTS) 
-    {
-        fseek(fp, pos, SEEK_SET);
-        fread(&entry, sizeof(struct utmp), 1, fp);
-
-        if (entry.ut_type == BOOT_TIME) 
-        {
-            last_reboots[count++] = entry;
-        }
-
-        pos -= sizeof(struct utmp);
-    }
-
-    fclose(fp);
-
-    write_to_JSON("\n\t\"Reboots_Shutdowns\":[");
-
-    for (int i = count - 1; i >= 0; i--) {
-        char *type = (last_reboots[i].ut_type == BOOT_TIME) ? "Reboot" : "Shutdown";
-        time_t t = last_reboots[i].ut_time;
-        char time_buf[64];
-        strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", localtime(&t));
-
-        write_to_JSON(
-                      "\n\t\t\t\t{"
-                      "\n\t\t\t\t\"Type\":\"%s\","
-                      "\n\t\t\t\t\"Time\":\"%s\""
-                      "\n\t\t\t\t}%s\n", type, time_buf, (i > 0 ? "," : "")
-                      );
-    }
-    write_to_JSON("\t\t\t],\n");
-}
-
-void log_failed_logins() 
-{
-    const char *paths[] = {"/var/log/btmp", "/var/log/btmp.1"};
-    struct utmp entry;
-    struct utmp last_fails[MAX_EVENTS];
-    int count = 0;
-    
-    for (int p = 0; p < 2 && count < MAX_EVENTS; ++p)
-    {
-        FILE *fp = fopen(paths[p], "rb");
-        if (!fp)
-        {
-            log_with_timestamp(stderr, "Could not open %s: %s\n", paths[p], strerror(errno));
-            continue;
-        }
-
-        while (fread(&entry, sizeof(struct utmp), 1, fp) == 1)
-        {
-            if ( entry.ut_type == LOGIN_PROCESS && (strlen(entry.ut_host) > 0) && strcmp(entry.ut_host, ":0") != 0)
-            {
-                if (count < MAX_EVENTS)
-                    last_fails[count++] = entry;
-                else
-                    break;
-            }
-        }
-
-        fclose(fp);
-    }
-    write_to_JSON("\n\t\"Failed_Login_Attempts\":[\n");
-
-    for (int i = 0; i < count; i++) 
-    {
-    time_t t = 0;
-    #if defined(__linux__)
-        t = last_fails[i].ut_tv.tv_sec;
-    #else
-        t = last_fails[i].ut_time;
-    #endif
-        char time_buf[64];
-        strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", localtime(&t));
-
-        write_to_JSON(
-                      "\n\t\t\t\t{"
-                      "\n\t\t\t\t\"User\":\"%s\","
-                      "\n\t\t\t\t\"Line\":\"%s\","
-                      "\n\t\t\t\t\"Host\":\"%s\","
-                      "\n\t\t\t\t\"Time\":\"%s\""
-                      "\n\t\t\t\t}%s", last_fails[i].ut_user, last_fails[i].ut_line, last_fails[i].ut_host, time_buf, (i < count - 1 ? "," : "")
-                      );
-    }
-
-    write_to_JSON("\n\t\t\t]\n");
-}
-
 void mqtt_publish_initialisation()
 {
     const char *online_payload = "{\"status\": \"online\"}";
@@ -873,7 +960,7 @@ void mqtt_publish_initialisation()
     }
         log_with_timestamp(stderr, "Unable To Connect To MQTT Broker: %s\nRetrying.....\n attempt no. %d\n", mosquitto_strerror(rc),attempts);
 
-        sleep(1 << attempts);  
+        sleep(attempts < 4 ? (1 << attempts) : 8);
     }  
     if (attempts == 5)
     {
@@ -973,7 +1060,6 @@ void clean_up_resources()
     mosquitto_publish(mosq, NULL, TOPIC, strlen(offline_payload), offline_payload, 1, false);
     sleep(1);  // Give time to send
     mosquitto_disconnect(mosq);
-    mosquitto_disconnect(mosq);
     
     log_with_timestamp(stdout, "MQTT Broker Disconnected\n");
     
@@ -1003,7 +1089,6 @@ void log_with_timestamp(FILE *stream, const char *format, ...)
     vfprintf(stream, format, args);    // Original message
     va_end(args);
 }
-
 
 void write_to_JSON(const char * format, ...)
 {

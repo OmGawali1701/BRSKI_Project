@@ -6,24 +6,24 @@ mosquitto_pub -h 10.182.3.33 -p 8883 --cafile /home/om/cert/ca.crt -t device/dat
 1. Starting your service
 
 sudo systemctl daemon-reload            
-sudo systemctl enable Behavioural_Attributes.service  
-sudo systemctl start Behavioural_Attributes.service   
-sudo systemctl status Behavioural_Attributes.service  
+sudo systemctl enable Behavioural_Attributes_Buff.service  
+sudo systemctl start Behavioural_Attributes_Buff.service   
+sudo systemctl status Behavioural_Attributes_Buff.service  
 
 
 2. Stopping your service
 
-sudo systemctl stop Behavioural_Attributes.service    
-sudo systemctl status Behavioural_Attributes.service  
-sudo systemctl disable Behavioural_Attributes.service 
-sudo systemctl status Behavioural_Attributes.service  
+sudo systemctl stop Behavioural_Attributes_Buff.service    
+sudo systemctl status Behavioural_Attributes_Buff.service  
+sudo systemctl disable Behavioural_Attributes_Buff.service 
+sudo systemctl status Behavioural_Attributes_Buff.service  
 
 
 3. Reloading your service (after config changes)
 
 sudo systemctl daemon-reload              
-sudo systemctl restart Behavioural_Attributes.service 
-sudo systemctl status Behavioural_Attributes.service  
+sudo systemctl restart Behavioural_Attributes_Buff.service 
+sudo systemctl status Behavioural_Attributes_Buff.service  
 
 
 locations:
